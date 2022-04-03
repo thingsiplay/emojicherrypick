@@ -6,7 +6,7 @@ Choose an emoji and go wild.
 * Source: https://github.com/thingsiplay/emojicherrypick
 * Releases: https://github.com/thingsiplay/emojicherrypick/releases
 * Update Notes: [CHANGES](CHANGES.md)
-* License: [MIT License](MIT License)
+* License: [MIT License](LICENSE)
 
 # Introduction
 
