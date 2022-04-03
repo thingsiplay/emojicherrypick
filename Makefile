@@ -1,17 +1,17 @@
 SHELL = /bin/bash
 
-APP_NAME = emojicherrypick
-APP_VERSION = $(shell ./$(APP_NAME).py --version | grep -oE '[0-9]+\.[0-9]+')
+APP_NAME := emojicherrypick
+APP_VERSION := $(shell python3 ./$(APP_NAME).py --version | grep -oE '[0-9]+\.[0-9]+')
 
-7Z_PATH = 7z
+7Z_PATH := 7z
 
-SRC_DIR = .
-DIST_DIR = ./dist
-PACKAGE_PATH = "$(DIST_DIR)/$(APP_NAME)-$(APP_VERSION)-Linux-bin.zip"
-VENV_DIR = "$(SRC_DIR)/venv_$(APP_NAME)"
-PYINSTALLER_PATH = "$(VENV_DIR)/bin/pyinstaller"
+SRC_DIR := .
+DIST_DIR := ./dist
+PACKAGE_PATH := $(DIST_DIR)/$(APP_NAME)-$(APP_VERSION)-Linux-bin.zip
+VENV_DIR := $(SRC_DIR)/venv_$(APP_NAME)
+PYINSTALLER_PATH := $(VENV_DIR)/bin/pyinstaller
 
-.DEFAULT_GOAL = build
+.DEFAULT_GOAL := build
 
 build: check venv dist pack
 
