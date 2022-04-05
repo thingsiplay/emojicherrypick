@@ -2,6 +2,7 @@
 
 import sys
 import os
+import shutil
 import argparse
 import json
 import urllib.request
@@ -19,12 +20,12 @@ class App:
     """ Contains all settings and meta information for the application. """
 
     name: str = 'emojicherrypick'
-    version: str = '0.1'
+    version: str = '0.2'
 
     def __init__(self, args: argparse.Namespace) -> None:
         """ Construct application attributes used as settings. """
 
-        self.print_version: bool = args.version
+        self.list_version: bool = args.version
         self.frozen: bool = bool(getattr(sys, 'frozen', False)
                                  and hasattr(sys, '_MEIPASS'))
         self.wipe_cache: bool = args.wipe_cache
@@ -59,6 +60,17 @@ class App:
         self.matching_rofi: str = args.matching_rofi
         self.pattern: str = args.pattern
         self.prompt: str = args.prompt
+        self.list_programs: bool = args.list_programs
+        self.programs: dict[str, Path] = {
+            'Python': Path(sys.executable),
+            'rofi': App.which(args.rofi),
+            'dmenu': App.which(args.dmenu),
+            'pmenu': App.which(args.pmenu),
+            'fzf': App.which(args.fzf),
+            'xclip': App.which(args.xclip),
+            'xdotool': App.which(args.xdotool),
+            'notify-send': App.which(args.notifysend),
+        }
 
         if self.wipe_cache:
             self.wipe_cache_files()
@@ -189,19 +201,19 @@ class App:
                 self.selected_desc = None
         return self.selected_emoji
 
+    def select_by_none(self):
+        """ Selects nothing and resets last selected emoji. """
+
+        return self.update_selected_emoji(None)
+
     def select_by_random(self):
         """ Selects an emoji by random chance. """
 
-        emoji_list: str = ''
-        if not self.noemojis and self.db_filtered.exists():
-            emoji_list += self.db_filtered.read_text().strip('\n')
-        if not self.norecents and self.db_recents.exists():
-            emoji_list += self.db_recents.read_text().strip('\n')
-        if not self.nofavorites and self.db_favorites.exists():
-            emoji_list += self.db_favorites.read_text().strip('\n')
-        random_set: set = list(set(emoji_list.splitlines()))
-        random.shuffle(random_set)
-        emoji = random_set[0].split(' ', 1)
+        random_set: set = set(self.load_emoji_list(aslist=True))
+        random_set.discard('')
+        random_list: list = list(random_set)
+        random.shuffle(random_list)
+        emoji = random_list[0].split(' ', 1)
         return self.update_selected_emoji(emoji)
 
     def select_by_filter(self) -> str | None:
@@ -228,7 +240,7 @@ class App:
         """ Select an emoji with dmenu and get emoji and desc tuple. """
 
         command: list[str] = []
-        command.append('dmenu')
+        command.append(self.programs['dmenu'].as_posix())
         command.append('-p')
         command.append(self.prompt)
         command.append('-l')
@@ -245,7 +257,7 @@ class App:
         """ Select an emoji with rofi and get emoji and desc tuple. """
 
         command: list[str] = []
-        command.append('rofi')
+        command.append(self.programs['rofi'].as_posix())
         command.append('-dmenu')
         command.append('-steal-focus')
         command.append('-p')
@@ -262,9 +274,37 @@ class App:
         if self.ignore_case:
             command.append('-i')
             command.append('-nocase-sensitive')
+        emoji_list = self.load_emoji_list()
+        emoji = App.select_command_emoji(command, emoji_list)
+        return self.update_selected_emoji(emoji)
+
+    def select_by_pmenu(self):
+        """ Select an emoji with pmenu and get emoji and desc tuple. """
+
+        command: list[str] = []
+        command.append(self.programs['pmenu'].as_posix())
+        command.append('-p')
+        command.append(self.prompt)
+        emoji_list = self.load_emoji_list()
+        if self.ignore_case:
+            emoji_list = emoji_list.lower()
+        emoji = App.select_command_emoji(command, emoji_list)
+        return self.update_selected_emoji(emoji)
+
+    def select_by_fzf(self):
+        """ Select an emoji with fzf and get emoji and desc tuple. """
+
+        command: list[str] = []
+        command.append(self.programs['fzf'].as_posix())
+        command.append('--layout')
+        command.append('reverse')
+        command.append('--prompt')
+        command.append(self.prompt)
         if self.pattern:
-            command.append('-filter')
+            command.append('--filter')
             command.append(self.pattern)
+        if self.ignore_case:
+            command.append('-i')
         emoji_list = self.load_emoji_list()
         emoji = App.select_command_emoji(command, emoji_list)
         return self.update_selected_emoji(emoji)
@@ -276,10 +316,14 @@ class App:
             emoji_list) -> Tuple[str, str] | Tuple[None, None]:
         """ Return selected emoji and desc from list using custom command. """
 
-        output_p = subprocess.run(command,
-                                  input=emoji_list,
-                                  capture_output=True,
-                                  text=True)
+        output_p: CompletedProcess | None = None
+        try:
+            output_p = subprocess.run(command,
+                                      input=emoji_list,
+                                      stdout=subprocess.PIPE,
+                                      text=True)
+        except FileNotFoundError:
+            raise subprocess.SubprocessError
         if output_p and output_p.stdout:
             try:
                 emoji, desc = output_p.stdout.split(' ', 1)
@@ -297,25 +341,37 @@ class App:
         else:
             print(self.selected_emoji, end='')
 
-    def send_emoji_to_clipboard(self) -> subprocess.Popen[str]:
+    def send_emoji_to_clipboard(self) -> subprocess.Popen | None:
         """ Copy emoji to systems clipboard. """
 
         command: list[str] = []
-        command.append('xclip')
+        command.append(self.programs['xclip'].as_posix())
         command.append('-rmlastnl')
         command.append('-selection')
         command.append('clipboard')
+        xclip_p: subprocess.Popen | None = None
         xclip_p = subprocess.Popen(command,
                                    stdin=subprocess.PIPE,
                                    text=True)
-        xclip_p.communicate(input=(self.selected_emoji))
+        if xclip_p:
+            try:
+                xclip_p.communicate(input=(self.selected_emoji), timeout=2)
+                if xclip_p.returncode:
+                    raise subprocess.SubprocessError
+            except subprocess.TimeoutExpired:
+                xclip_p.kill()
+                xclip_p = None
+                raise subprocess.SubprocessError
+        else:
+            xclip_p = None
+            raise subprocess.SubprocessError
         return xclip_p
 
-    def send_emoji_to_typing(self) -> CompletedProcess:
+    def send_emoji_to_typing(self) -> CompletedProcess | None:
         """ Output emoji to active window as if user typed it on keyboard. """
 
         command: list[str] = []
-        command.append('xdotool')
+        command.append(self.programs['xdotool'].as_posix())
         command.append('getwindowfocus')
         command.append('windowfocus')
         command.append('--sync')
@@ -325,22 +381,28 @@ class App:
         command.append('25')
         if self.selected_emoji:
             command.append(self.selected_emoji)
+        xdotool_p: CompletedProcess | None = None
         xdotool_p = subprocess.run(command,
-                                   capture_output=True,
-                                   text=True)
+                                   stdin=subprocess.PIPE,
+                                   text=True,
+                                   check=True,
+                                   timeout=1)
         return xdotool_p
 
-    def send_emoji_to_notify(self) -> CompletedProcess:
+    def send_emoji_to_notify(self) -> CompletedProcess | None:
         """ Send the emoji as a notification message. """
 
         command: list[str] = []
-        command.append('notify-send')
+        command.append(self.programs['notify-send'].as_posix())
         command.append('--urgency=low')
         if self.selected_emoji:
             command.append(self.selected_emoji)
+        notify_p: CompletedProcess | None = None
         notify_p = subprocess.run(command,
-                                  capture_output=True,
-                                  text=True)
+                                  stdin=subprocess.PIPE,
+                                  text=True,
+                                  check=True,
+                                  timeout=1)
         return notify_p
 
     def append_recents(self) -> bool:
@@ -381,6 +443,35 @@ class App:
         else:
             return False
 
+    def print_version(self):
+        """ Print version and frozen state of this program. """
+
+        if self.frozen:
+            frozen = ' (pyinstaller)'
+        else:
+            frozen = ''
+        print(f'{self.name} v{self.version}{frozen}')
+
+    def print_list_programs(self):
+        """ Print all program names and paths to stdout. """
+
+        for name, path in self.programs.items():
+            print(name + ':', path.as_posix())
+
+    @classmethod
+    def which(cls, command: str) -> Path:
+        """ Find command in $PATH or get fullpath. """
+
+        program: str | None = shutil.which(command)
+        path: Path
+        if program:
+            path = Path(program)
+        else:
+            path = fullpath(command)
+            if not path.is_file():
+                path = Path(command)
+        return path
+
 
 def fullpath(file: str) -> Path:
     """ Transform str to path, resolve env vars, tilde and make absolute. """
@@ -406,260 +497,327 @@ def parse_arguments(args: list[str] | None = None) -> argparse.Namespace:
         help='print version and exit'
     )
 
-    g_enable_output = parser.add_argument_group('enable output')
+    parser.add_argument(
+        '--list-programs',
+        default=False,
+        action='store_true',
+        help='list available programs and exit'
+    )
 
-    g_enable_output.add_argument(
+    p_enable_output = parser.add_argument_group('enable output')
+
+    p_enable_output.add_argument(
         '-o', '--stdout',
         default=False,
         action='store_true',
-        help=('~ write selected emoji to stdout, unless option "--nostdout" '
+        help=('write selected emoji to stdout, unless option "--nostdout" '
               'is in effect')
     )
 
-    g_enable_output.add_argument(
+    p_enable_output.add_argument(
         '-t', '--typing',
         default=False,
         action='store_true',
-        help=('~ simulate typing out the emoji on the keyboard, unless option '
+        help=('simulate typing out the emoji on the keyboard, unless option '
               '"--notyping" is in effect, typing can be unreliable and not '
               'all applications may accept or play nice with it')
     )
 
-    g_enable_output.add_argument(
+    p_enable_output.add_argument(
         '-c', '--clipboard',
         default=False,
         action='store_true',
-        help=('~ copy selected emoji to system clipboard, unless option '
+        help=('copy selected emoji to system clipboard, unless option '
               '"--noclipboard" is in effect')
     )
 
-    g_enable_output.add_argument(
+    p_enable_output.add_argument(
         '-n', '--notify',
         default=False,
         action='store_true',
-        help=('~ send selected emoji as a notification message, unless option '
+        help=('send selected emoji as a notification message, unless option '
               '"--nonotify" is in effect')
     )
 
-    g_disable_output = parser.add_argument_group('disable output')
+    p_disable_output = parser.add_argument_group('disable output')
 
-    g_disable_output.add_argument(
+    p_disable_output.add_argument(
         '-O', '--nostdout',
         default=False,
         action='store_true',
-        help='~ disable interaction with stdout, regardless of other options'
+        help='disable interaction with stdout, regardless of other options'
     )
 
-    g_disable_output.add_argument(
+    p_disable_output.add_argument(
         '-T', '--notyping',
         default=False,
         action='store_true',
-        help=('~ disable simulated typing to active window, regardless of '
+        help=('disable simulated typing to active window, regardless of '
               'other options')
     )
 
-    g_disable_output.add_argument(
+    p_disable_output.add_argument(
         '-C', '--noclipboard',
         default=False,
         action='store_true',
-        help=('~ disable interaction with clipboard, regardless of other '
+        help=('disable interaction with clipboard, regardless of other '
               'options')
     )
 
-    g_disable_output.add_argument(
+    p_disable_output.add_argument(
         '-N', '--nonotify',
         default=False,
         action='store_true',
-        help=('~ do not send any notification messages, regardless of other '
+        help=('do not send any notification messages, regardless of other '
               'options')
     )
 
-    g_menufilter = parser.add_argument_group('menu and filters')
+    p_programs = parser.add_argument_group('programs')
+
+    p_programs.add_argument(
+        '--rofi',
+        metavar='CMD',
+        default='rofi',
+        help=('name or path to "rofi" program when option "--menu" is set to '
+              '"rofi"')
+    )
+
+    p_programs.add_argument(
+        '--dmenu',
+        metavar='CMD',
+        default='dmenu',
+        help=('name or path to "dmenu" program when option "--menu" is set to '
+              '"dmenu"')
+    )
+
+    p_programs.add_argument(
+        '--pmenu',
+        metavar='CMD',
+        default='pmenu',
+        help=('name or path to "pmenu" program when option "--menu" is set to '
+              '"pmenu"')
+    )
+
+    p_programs.add_argument(
+        '--fzf',
+        metavar='CMD',
+        default='fzf',
+        help=('name or path to "fzf" program when option "--menu" is set to '
+              '"fzf"')
+    )
+
+    p_programs.add_argument(
+        '--xclip',
+        metavar='CMD',
+        default='xclip',
+        help=('name or path to "xclip" program to handle clipboard when '
+              'option "--clipboard" is active')
+    )
+
+    p_programs.add_argument(
+        '--xdotool',
+        metavar='CMD',
+        default='xdotool',
+        help=('name or path to "xdotool" program to handle typing when option '
+              '"--typing" is active')
+    )
+
+    p_programs.add_argument(
+        '--notifysend',
+        metavar='CMD',
+        default='notify-send',
+        help=('name or path to "notify-send" program to handle notifications '
+              'when option "--notify" is active')
+    )
+
+    p_menufilter = parser.add_argument_group('engines and filters')
 
     default_menu: str = 'rofi'
-    g_menufilter.add_argument(
+    p_menufilter.add_argument(
         '-M', '--menu',
         metavar='SYSTEM',
         default=default_menu,
-        choices=['rofi', 'dmenu', 'filter', 'random', 'none'],
-        help=('~ change menu engine to select emojis, available systems: '
-              '"rofi", "dmenu", "filter", "random", "none", "none" disables '
-              'selection, "filter" wont display a menu but choose first entry '
-              'in the list that matches the text at option "--pattern", '
-              '"random" wont display a menu but choose an entry by random '
-              f'chance, defaults to: "{default_menu}"')
+        choices=['rofi', 'dmenu', 'pmenu', 'fzf', 'filter', 'random', 'none'],
+        help=('change menu engine to select emojis, available systems: '
+              '"rofi", "dmenu", "pmenu", "fzf", "filter", "random", "none", '
+              'system "none" disables selection, "filter" won\'t display a '
+              'menu but choose first entry in the list that matches the text '
+              'at option "--pattern", systems "fzf" and "pmenu" are terminal '
+              'programs, "random" won\'t display a menu but choose an entry '
+              f'by random chance, defaults to: "{default_menu}"')
+    )
+
+    p_menufilter.add_argument(
+        '-p', '--pattern',
+        metavar='filter',
+        default='',
+        help=('simple text filter, used when option "--menu" is set to '
+              '"filter" or "fzf", causes in both cases to non interactive '
+              'selection of first emoji that matches the pattern')
     )
 
     default_matching_rofi: str = 'normal'
-    g_menufilter.add_argument(
+    p_menufilter.add_argument(
         '-m', '--matching-rofi',
         metavar='MODE',
         default=default_matching_rofi,
         choices=['normal', 'regex', 'glob', 'fuzzy', 'prefix'],
-        help=('~ set matching algorithm for search in rofi, available modes: '
+        help=('set matching algorithm for search in rofi, available modes: '
               '"normal", "regex", "glob", "fuzzy", "prefix", defaults to: '
               f'"{default_matching_rofi}"')
     )
 
-    g_menufilter.add_argument(
-        '-p', '--pattern',
-        metavar='filter',
-        default='',
-        help=('~ simple text filter, used when option "--menu" is set to '
-              '"filter", also set as a predefined pattern in the search bar '
-              'of "rofi" when it is loaded up')
-    )
-
-    g_menufilter.add_argument(
+    p_menufilter.add_argument(
         '-i', '--ignore-case',
         default=False,
         action='store_true',
-        help=('~ ignore case sensitivity when searching list of emojis, '
+        help=('ignore case sensitivity when searching list of emojis, '
               'unless option "--noignore-case" is in effect')
     )
 
-    g_menufilter.add_argument(
+    p_menufilter.add_argument(
         '-I', '--noignore-case',
         default=False,
         action='store_true',
-        help='~ case sensitive search of emojis, regardless of other options'
+        help='case sensitive search of emojis, regardless of other options'
     )
 
-    default_prompt: str = '🍒'
-    g_menufilter.add_argument(
-        '-@', '--prompt',
-        metavar='TEXT',
-        default=default_prompt,
-        help=('~ set custom prompt on user input menu left of entry field, '
-              f'defaults to: "{default_prompt}"')
-    )
-
-    g_cache = parser.add_argument_group('cache files')
+    p_cache = parser.add_argument_group('cache files')
 
     default_url = ('https://gist.githubusercontent.com/thingsiplay/'
                    '1f500459bc117cf0b63e1f5c11e03963/raw/'
                    'd8e4b78cfe66862cf3809443c1dba017f37b61db/emojis.json')
-    g_cache.add_argument(
+    p_cache.add_argument(
         '-u', '--url',
         metavar='URL',
         default=(default_url),
-        help=('~ source web address to download file "emojis.json", defaults '
+        help=('source web address to download file "emojis.json", defaults '
               f'to: "{default_url}"')
     )
 
-    g_cache.add_argument(
+    p_cache.add_argument(
         '-U', '--offline',
         default=False,
         action='store_true',
-        help='~ prohibit downloading files from network, mainly "emojis.json"'
+        help='prohibit downloading files from network, mainly "emojis.json"'
     )
 
     default_cache: str = "~/.cache/emojicherrypick"
-    g_cache.add_argument(
+    p_cache.add_argument(
         '-d', '--cache-dir',
         metavar='DIR',
         default=default_cache,
-        help=('~ directory for downloads and other long-lived temporary files '
+        help=('directory for downloads and other long-lived temporary files '
               f'used for quick access, defaults to: "{default_cache}"')
     )
 
-    g_cache.add_argument(
+    p_cache.add_argument(
         '-w', '--wipe-cache',
         default=False,
         action='store_true',
-        help=('~ delete temporary cache files, redownload and recreate them '
+        help=('delete temporary cache files, redownload and recreate them '
               'unless option "--offline" is in effect')
     )
 
-    g_cache.add_argument(
+    p_cache.add_argument(
         '-E', '--noemojis',
         default=False,
         action='store_true',
-        help=('~ disable loading from main emojis database created from '
+        help=('disable loading from main emojis database created from '
               '"emojis.json"')
     )
 
     default_recents: str = "~/.cache/emojicherrypick/recents.cherry"
-    g_cache.add_argument(
+    p_cache.add_argument(
         '-r', '--recents',
         metavar='FILE',
         default=default_recents,
-        help=('~ program keeps track of last used emojis and saves them to '
+        help=('program keeps track of last used emojis and saves them to '
               'a history file, the last entries will be displayed at the top '
               'of each emoji listing in the menus, same format as '
               '"--favorites" file, use option "--recents-size" to set number '
               f'of entries to show blah, defaults to: "{default_recents}"')
     )
 
-    g_cache.add_argument(
+    p_cache.add_argument(
         '-R', '--norecents',
         default=False,
         action='store_true',
-        help='~ disable recents file specified at option "--recents"'
+        help='disable recents file specified at option "--recents"'
     )
 
     default_recents_size: int = 2
-    g_cache.add_argument(
+    p_cache.add_argument(
         '-k', '--recents-size',
         metavar='NUM',
         default=default_recents_size,
         type=int,
         choices=range(0, 200),
-        help=('~ number of rows to display in the menu for recently used '
-              f'emojis, defaults to: "{default_recents_size}"')
+        help=('read number of recently used emojis and ignore rest of file, '
+              'can be used for displaying in the menu or at filters, '
+              f'defaults to: "{default_recents_size}"')
     )
 
-    g_config = parser.add_argument_group('config files')
+    p_config = parser.add_argument_group('config files')
 
     default_favorites: str = "~/.config/emojicherrypick/favorites.cherry"
-    g_config.add_argument(
+    p_config.add_argument(
         '-f', '--favorites',
         metavar='FILE',
         default=default_favorites,
-        help=('~ user list of emojis to list at the beginning of each emoji '
+        help=('user list of emojis to list at the beginning of each emoji '
               'listing in the menus, 1 line per emoji set, each set starts '
               'with an emoji or any text and goes until first space is found, '
               'rest of the line are names, descripion and keywords, defaults '
               f'to: "{default_favorites}"')
     )
 
-    g_config.add_argument(
+    p_config.add_argument(
         '-F', '--nofavorites',
         default=False,
         action='store_true',
-        help='~ disable favorites file specified at option "--favorites"'
+        help='disable favorites file specified at option "--favorites"'
     )
 
-    g_gui = parser.add_argument_group('graphical interface')
+    p_menuinterface = parser.add_argument_group('menu interface')
+
+    default_prompt: str = '🍒'
+    p_menuinterface.add_argument(
+        '-@', '--prompt',
+        metavar='TEXT',
+        default=default_prompt,
+        help=('set custom prompt on user input menu left of entry field, '
+              f'defaults to: "{default_prompt}"')
+    )
 
     default_font_family: str = 'Noto Color Emoji'
-    g_gui.add_argument(
+    p_menuinterface.add_argument(
         '-g', '--font-family',
         metavar='NAME',
         default=default_font_family,
-        help=('~ font name to use for dispaly with the menu, defaults to: '
+        help=('font name to use for dispaly with the menu, defaults to: '
               f'"{default_font_family}"')
     )
 
     default_font_size: int = 16
-    g_gui.add_argument(
+    p_menuinterface.add_argument(
         '-s', '--font-size',
         metavar='NUM',
         default=default_font_size,
         type=int,
         choices=range(4, 256),
-        help=('~ font size of emojis and text to display in the menu, '
+        help=('font size of emojis and text to display in the menu, '
               f'defaults to: "{default_font_size}"')
     )
 
     default_list_size: int = 15
-    g_gui.add_argument(
+    p_menuinterface.add_argument(
         '-l', '--list-size',
         metavar='NUM',
         default=default_list_size,
         type=int,
         choices=range(1, 200),
-        help=('~ number of rows to display in the menu, defaults to: '
+        help=('number of rows to display in the menu, defaults to: '
               f'"{default_list_size}"')
     )
 
@@ -674,36 +832,56 @@ def main(args: list[str] | None = None) -> int:
 
     app: App
     if not args and not sys.argv[1:]:
-        app = App(parse_arguments(['-con']))
+        args_default: list[str] = [os.getenv('EMOJICHERRYPICK_DEFAULT',
+                                   default='-con')]
+        app = App(parse_arguments(args_default))
     else:
         app = App(parse_arguments(args))
 
-    if app.print_version:
-        if app.frozen:
-            frozen = ' (pyinstaller)'
-        else:
-            frozen = ''
-        print(f'{app.name} v{app.version}{frozen}')
+    if app.list_version:
+        app.print_version()
+        return 0
+    elif app.list_programs:
+        app.print_list_programs()
         return 0
 
-    if app.menu == 'rofi':
-        app.select_by_rofi()
-    elif app.menu == 'dmenu':
-        app.select_by_dmenu()
-    elif app.menu == 'random':
-        app.select_by_random()
-    elif app.menu == 'filter':
-        app.select_by_filter()
+    try:
+        if app.menu == 'rofi':
+            app.select_by_rofi()
+        elif app.menu == 'dmenu':
+            app.select_by_dmenu()
+        elif app.menu == 'pmenu':
+            app.select_by_pmenu()
+        elif app.menu == 'fzf':
+            app.select_by_fzf()
+        elif app.menu == 'filter':
+            app.select_by_filter()
+        elif app.menu == 'random':
+            app.select_by_random()
+        elif app.menu == 'none':
+            app.select_by_none()
+        else:
+            raise RuntimeError('Unkown menu option.')
+            return -1
+    except subprocess.SubprocessError:
+        return 1
 
     if app.selected_emoji:
-        if app.stdout:
-            app.send_emoji_to_stdout()
-        if app.clipboard:
-            app.send_emoji_to_clipboard()
-        if app.typing:
-            app.send_emoji_to_typing()
-        if app.notify:
-            app.send_emoji_to_notify()
+        try:
+            if app.stdout:
+                app.send_emoji_to_stdout()
+            if app.clipboard:
+                app.send_emoji_to_clipboard()
+            if app.typing:
+                app.send_emoji_to_typing()
+            if app.notify:
+                app.send_emoji_to_notify()
+        except subprocess.SubprocessError:
+            return 3
+    elif app.menu == 'none':
+        return 0
+    else:
+        return 2
     return 0
 
 

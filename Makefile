@@ -57,6 +57,9 @@ dist:
 	cp "$(SRC_DIR)/bigfavorites.webp" "$(DIST_DIR)"
 	source "$(VENV_DIR)/bin/activate" \
 		&& "$(PYINSTALLER_PATH)" --onefile --clean --log-level WARN "$(APP_NAME).py"
+	chmod +x "$(DIST_DIR)/$(APP_NAME)"
+	chmod +x "$(DIST_DIR)/install.sh"
+	chmod +x "$(DIST_DIR)/uninstall.sh"
 
 venv:
 	python3 -m venv "$(VENV_DIR)" \

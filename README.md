@@ -18,7 +18,7 @@ your distribution? Me neither; here is it anyway.
 (Note: The screenshots show you my personal setup of `rofi`.)
 
 This is a commandline driven frontend and launcher to several established Linux
-applications, such as `rofi` and `xclip`. The default behavior is to open a
+applications, such as `rofi`, `fzf` and `xclip`. The default behavior is to open a
 `rofi` search menu to choose an emoji, that is then copied to clipboard, print
 to stdout and show a notification of chosen emoji.
 
@@ -33,7 +33,9 @@ You can...
 * use a `rofi` menu to choose emoji,
 * use alternative filter algorithm for `rofi` search, such as "regex" or "glob",
 * use `dmenu` instead `rofi`,
-* choose emoji randomly without a menu (think of the possibilities),
+* use `fzf` to make a selection in the terminal instead,
+* choose emoji randomly without an interactive menu (think of the
+  possibilities),
 * create a favorites file with your favorite emojis (requires manual text
   editing),
 * keeps track of recently used emojis,
@@ -49,17 +51,26 @@ used.
 
 ### Dependencies
 
-* `rofi` - the default active menu, only required when option `--menu` is set to
-  `rofi` (default)
-* `dmenu` - alternative menu, only required if `--menu` is set to `dmenu`
-* `xclip` - used to copy to clipboard, required if option `--clipboard` is
-  enabled 
-* `xdotool` - used to simulate typing on keyboard, required if option `--typing`
-  is enabled
-* `notify-send` - used to create notifications, required if option `--notify`
-  is enabled (in Manjaro provided with package `libnotify`)
+* `rofi`: [Github](https://github.com/davatorium/rofi) - the default active
+  menu, only required when option `--menu` is set to `rofi` (default)
+* `dmenu`: [Suckless](https://tools.suckless.org/dmenu/) - alternative menu,
+  only required if `--menu` is set to `dmenu`
+* `pmenu`: [Github](https://github.com/sgtpep/pmenu) - alternative menu, only
+  required if `--menu` is set to `pmenu`
+* `fzf`: [Github](https://github.com/junegunn/fzf) - alternative menu, only
+  required if `--menu` is set to `fzf`
+* `xclip`: [Github](https://github.com/astrand/xclip) - used to copy to
+  clipboard, required if option `--clipboard` is enabled 
+* `xdotool`: [Github](https://github.com/jordansissel/xdotool) - used to
+  simulate typing on keyboard, required if option `--typing` is enabled
+* `libnotify` / `notify-send`:
+  [Gnome](https://gitlab.gnome.org/GNOME/libnotify) - used to create
+  notifications, required if option `--notify` is enabled (in Manjaro provided
+  with package `libnotify`)
 
-You only need those components which are being used.
+You only need those components which are being used. Most packages should be
+available in your distributions repository; maybe besides `pmenu`, which is
+available as an AUR package on Manjaro/Archlinux.
 
 The default font "*Noto Color Emoji*" can be changed, but if you are going to
 leave and use it, you will need following packages:
@@ -69,7 +80,7 @@ leave and use it, you will need following packages:
 
 Single command to install all in one go on Manjaro:
 
-`pamac install rofi dmenu xclip xdotool libnotify noto-fonts-emoji`
+`pamac install rofi dmenu pmenu fzf xclip xdotool libnotify noto-fonts-emoji`
 
 # Installation
 
@@ -97,19 +108,40 @@ will create a venv, update stuff in it and run PyInstaller from it.
 usage: emojicherrypick [options]
 ```
 
-On first run a small database with all emojis included will be downloaded and
-prepaired for further usage. This is a process that takes probably just a
-second and is needed only once (unless the file "emojis.json" already exists).
-The program has a lot of options that you can use from the commandline in a
-terminal or a script. Normally the program won't output your selected emoji,
-unless you tell it to. But the selection will be saved in a history file, which
-will be shown in the menu next time.
+If you run the application the first time, it will automatically download a
+small .json database with all smileys. You can prevent it from accessing the
+web with the option `--offline`. This process takes about a second or so and is
+only done if the file does not exist already.
 
-*Default*: If no commandline options are given to the program, then defaults
-`-c -o -n` are in effect, to output emoji at stdout, save it to clipboard and
-make a notification. Have in mind, the moment you are activating any option
-manually like `-i` (short for `--ignore-case`), then no default options are in
-effect anymore and you need to activate output manually.
+## Input (choose an emoji)
+
+There are different menu or filter systems to select an emoji from all loaded
+files. The default way is the interactive graphical menu with `rofi`, which has
+a search or filter bar. But the menu system can be changed to let's say `dmenu`
+or even one that works in the terminal itself, let's say to `fzf`. To set a
+menu system (also called engine), use the option `--menu`. At default the
+selected emoji will be saved in a history file and loaded to top of menu next
+time.
+
+## Output
+
+Once a selection is made, then the program goes into next step to output the
+selection. Normally no output is done and you have to use one of the options.
+Unless you run the program entirely without options, in which case the defaults
+are kicking in (more about in below section). In example `-c` (short for
+`--clipboard`) will cause the program to copy the selected emoji to system
+clipboard. Option `-o` (short for `--stdout`) will cause the program to output
+to stdout (in example to pipe to other programs).
+
+## Default (if no options are given)
+
+If no commandline options are given to the program, then defaults will be used.
+The defaults are `-c -o -n`, to output emoji at stdout, save it to clipboard
+and make a notification. Have in mind, the moment you are activating any option
+manually, the program will not load the above discussed defaults and you need
+to activate output manually. The above default options can be changed by
+setting an environmental variable `EMOJICHERRYPICK_DEFAULT` with your custom
+commandline options.
 
 Use `emojicherrypick --help` to list all options and their brief descriptions.
 
@@ -128,7 +160,7 @@ $ emojicherrypick -@⭐ --noemojis --norecents -l6 -s32 --typing
 $ emojicherrypick -@custom -E -k 0 -f "./custom.cherry" -o
 ```
 
-## Favorites
+## Favorites (custom .cherry files)
 
 You can have a sort of "bookmarks" of your favorite emojis by creating and
 editing a text file. The program will always show them on top of the menu. The
@@ -150,7 +182,7 @@ only too. An example "favorites.cherry":
 very@important.org email
 ```
 
-Depending on the application or font, some emojis may be not be visible to you.
+Depending on the application or font, some emojis may be not visible to you.
 
 # Additional files in use
 
