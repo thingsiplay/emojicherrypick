@@ -2,6 +2,12 @@
 
 Update history for **Emoji Cherry Pick**.
 
+## current
+
+* new: options `--ignore-skin` and `--no-ignore-skin` to ignore emoji skin
+  color variations when creating the cache, default behavior was to ignore
+  and exclude other colors than base (thanks contribution from dotcs)
+
 ## v0.2 - April 5, 2022
 
 * new: CLI engine `fzf` at option `--mode`, also related option `--filter`
