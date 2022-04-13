@@ -57,6 +57,7 @@ class App:
         self.notify: bool = args.notify and not args.nonotify
         self.typing: bool = args.typing and not args.notyping
         self.ignore_case: bool = args.ignore_case and not args.noignore_case
+        self.ignore_skin: bool = args.ignore_skin
         self.matching_rofi: str = args.matching_rofi
         self.pattern: str = args.pattern
         self.prompt: str = args.prompt
@@ -159,9 +160,10 @@ class App:
 
                 # Exclude emojis that have "skin" in their names, as they are
                 # mostly color variations of the main emoji.
-                if ('skin' not in emoji['name']
-                        and 'skin_tone' not in emoji['shortname']
-                        and emoji['name']):
+                not_ignored_by_skin = 'skin' not in emoji['name'] \
+                    and 'skin_tone' not in emoji['shortname'] if self.ignore_skin \
+                        else True
+                if (not_ignored_by_skin and emoji['name']):
 
                     # Format:
                     # ☺️ smiling face Smileys & Emotion (face-affection)
@@ -756,6 +758,13 @@ def parse_arguments(args: list[str] | None = None) -> argparse.Namespace:
         help=('read number of recently used emojis and ignore rest of file, '
               'can be used for displaying in the menu or at filters, '
               f'defaults to: "{default_recents_size}"')
+    )
+
+    p_cache.add_argument(
+        '--ignore-skin',
+        default=True,
+        action=argparse.BooleanOptionalAction,
+        help='ignore emoji skin variations when creating the cache'
     )
 
     p_config = parser.add_argument_group('config files')
